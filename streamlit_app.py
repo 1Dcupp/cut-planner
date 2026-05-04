@@ -21,7 +21,7 @@ if "layouts" not in st.session_state:
     st.session_state.layouts = []
 
 # -----------------------------
-# QR
+# QR CODE
 # -----------------------------
 def make_qr(url):
     img = qrcode.make(url)
@@ -30,24 +30,24 @@ def make_qr(url):
     return buf
 
 # -----------------------------
-# REAL OPTIMIZER (CORE ENGINE)
+# REAL OPTIMIZER (v1 stable)
 # -----------------------------
 def generate_layouts(cuts):
-    widths = []
+    items = []
 
-    # expand into usable list
+    # expand quantities into list
     for c in cuts:
         for _ in range(int(c["Qty"])):
-            widths.append(c["Width"])
+            items.append(c["Width"])
 
-    if not widths:
+    if not items:
         return []
 
     layouts = []
 
-    # try combinations of up to 4 blades (keeps it fast + realistic)
-    for r in range(1, min(5, len(widths) + 1)):
-        for combo in combinations(widths, r):
+    # try combinations (up to 4 blades per layout for stability)
+    for r in range(1, min(5, len(items) + 1)):
+        for combo in combinations(items, r):
 
             total = sum(combo)
 
@@ -58,23 +58,23 @@ def generate_layouts(cuts):
 
             layouts.append({
                 "Blade Setup": " + ".join([f"{w}\"" for w in combo]),
+                "Pieces": len(combo),
                 "Total Width": total,
-                "Waste": round(waste, 2),
-                "Pieces": len(combo)
+                "Waste": round(waste, 2)
             })
 
-    # rank best (least waste, most usage)
+    # rank best layouts (least waste first, then most fill)
     layouts.sort(key=lambda x: (x["Waste"], -x["Total Width"]))
 
-    return layouts[:20]  # top 20 best layouts
+    return layouts[:20]
 
 # -----------------------------
-# UI
+# UI HEADER
 # -----------------------------
-st.title("Cut Planner – Optimizer Mode (134\")")
+st.title("Cut Planner Optimizer (134\" System)")
 
 # -----------------------------
-# INPUT
+# INPUT SECTION
 # -----------------------------
 col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
 
@@ -90,30 +90,31 @@ with col3:
 with col4:
     st.write("")
     if st.button("Add"):
-        st.session_state.cuts.append({
-            "Width": width,
-            "Qty": qty,
-            "Gram": gram
-        })
+        if width > 0 and qty > 0:
+            st.session_state.cuts.append({
+                "Width": width,
+                "Qty": qty,
+                "Gram": gram
+            })
         st.rerun()
 
 # -----------------------------
 # CUT LIST
 # -----------------------------
-st.subheader("Cuts")
+st.subheader("Cuts List")
 
 if st.session_state.cuts:
     st.dataframe(st.session_state.cuts, use_container_width=True)
 else:
-    st.caption("No cuts added")
+    st.caption("No cuts added yet")
 
 # -----------------------------
-# ACTIONS
+# ACTION BUTTONS
 # -----------------------------
 colA, colB, colC = st.columns(3)
 
 with colA:
-    generate = st.button("Generate Best Layouts")
+    generate = st.button("Generate Layouts")
 
 with colB:
     print_btn = st.button("Print")
@@ -122,7 +123,7 @@ with colC:
     qr_btn = st.button("QR Code")
 
 # -----------------------------
-# GENERATE
+# GENERATE LAYOUTS
 # -----------------------------
 if generate:
     st.session_state.layouts = generate_layouts(st.session_state.cuts)
@@ -132,7 +133,7 @@ if generate:
 # OUTPUT
 # -----------------------------
 if st.session_state.layouts:
-    st.subheader("Best Blade Layouts (Ranked)")
+    st.subheader("Best Blade Layouts")
 
     st.dataframe(st.session_state.layouts, use_container_width=True)
 
@@ -140,4 +141,13 @@ if st.session_state.layouts:
 # PRINT PLACEHOLDER
 # -----------------------------
 if print_btn:
-    st.info("Next step: PDF print sheet export (ready
+    st.info("Print export (PDF) will be added next step")
+
+# -----------------------------
+# QR CODE
+# -----------------------------
+if qr_btn:
+    st.subheader("Share App")
+    qr = make_qr(APP_URL)
+    st.image(qr, width=200)
+    st.caption(APP_URL)
