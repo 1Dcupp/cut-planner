@@ -18,49 +18,39 @@ if "plan" not in st.session_state:
     st.session_state.plan = []
 
 # -----------------------------
-# BUILD FLAT ORDER LIST
+# BUILD DEMAND
 # -----------------------------
 def build_demand(cuts):
     demand = []
     for c in cuts:
         demand += [c["Width"]] * int(c["Qty"])
-    return sorted(demand, reverse=True)
+    return demand
 
 # -----------------------------
-# FIND BEST LAYOUT FOR REMAINING PIECES
+# PICK BEST SINGLE MAT LAYOUT
+# (greedy fit)
 # -----------------------------
-def find_best_layout(remaining):
-    best = None
-    best_score = 0
+def build_layout(remaining):
+    remaining = sorted(remaining, reverse=True)
+    layout = []
+    total = 0
 
-    # try building a mat greedily
-    for i in range(len(remaining)):
-        total = 0
-        layout = []
+    for w in remaining:
+        if total + w <= MAT_WIDTH:
+            layout.append(w)
+            total += w
 
-        for j in range(i, len(remaining)):
-            if total + remaining[j] <= MAT_WIDTH:
-                total += remaining[j]
-                layout.append(remaining[j])
-
-        if layout:
-            score = total  # higher fill = better
-
-            if score > best_score:
-                best_score = score
-                best = layout
-
-    return best
+    return layout
 
 # -----------------------------
-# MAIN SOLVER
+# FACTORY SOLVER
 # -----------------------------
-def solve(cuts):
+def solve(cuts, layers):
     remaining = build_demand(cuts)
-    result = []
+    plan = []
 
     while remaining:
-        layout = find_best_layout(remaining)
+        layout = build_layout(remaining)
 
         if not layout:
             break
@@ -69,24 +59,26 @@ def solve(cuts):
         for w in layout:
             remaining.remove(w)
 
-        result.append({
+        plan.append({
             "Blade Setup": " + ".join([f'{w}"' for w in layout]),
             "Pieces per Mat": len(layout),
-            "Mat Width Used": sum(layout),
-            "Waste": round(MAT_WIDTH - sum(layout), 2)
+            "Mat Fill": sum(layout),
+            "Waste": round(MAT_WIDTH - sum(layout), 2),
+            "Layers per Mat": layers,
+            "Effective Output": len(layout) * layers
         })
 
-    return result
+    return plan
 
 # -----------------------------
 # UI
 # -----------------------------
-st.title("Cut Planner – Production Optimizer (134\")")
+st.title("Cut Planner – FACTORY MODE (134\")")
 
 # -----------------------------
 # INPUT
 # -----------------------------
-col1, col2, col3, col4 = st.columns([2,2,2,1])
+col1, col2, col3, col4 = st.columns([2,2,2,2])
 
 with col1:
     width = st.number_input("Cut Width", step=0.5)
@@ -98,13 +90,15 @@ with col3:
     gram = st.number_input("Gram Weight", step=1)
 
 with col4:
-    if st.button("Add"):
-        st.session_state.cuts.append({
-            "Width": width,
-            "Qty": qty,
-            "Gram": gram
-        })
-        st.rerun()
+    layers = st.selectbox("Layers per Mat", [1, 2, 3])
+
+if st.button("Add Cut"):
+    st.session_state.cuts.append({
+        "Width": width,
+        "Qty": qty,
+        "Gram": gram
+    })
+    st.rerun()
 
 # -----------------------------
 # CUT LIST
@@ -113,19 +107,23 @@ st.subheader("Cuts")
 st.dataframe(st.session_state.cuts, use_container_width=True)
 
 # -----------------------------
-# RUN OPTIMIZER
+# GENERATE
 # -----------------------------
-if st.button("Generate Production Plan"):
-    st.session_state.plan = solve(st.session_state.cuts)
-    st.success("Production plan generated")
+if st.button("Generate Factory Plan"):
+    st.session_state.plan = solve(st.session_state.cuts, layers)
+    st.success("Factory plan generated")
 
 # -----------------------------
 # OUTPUT
 # -----------------------------
 if st.session_state.plan:
-    st.subheader("Production Layouts (Real Mats)")
+    st.subheader("Factory Production Plan")
 
     st.dataframe(st.session_state.plan, use_container_width=True)
 
+    total_mats = len(st.session_state.plan)
+    total_output = sum(p["Effective Output"] for p in st.session_state.plan)
+
     st.subheader("Summary")
-    st.write(f"Total Mats Needed: {len(st.session_state.plan)}")
+    st.write(f"Total Mats Needed: {total_mats}")
+    st.write(f"Total Output Produced: {total_output}")
