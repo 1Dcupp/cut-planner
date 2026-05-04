@@ -1,5 +1,4 @@
 import streamlit as st
-import qrcode
 from io import BytesIO
 
 # -----------------------------
@@ -8,7 +7,7 @@ from io import BytesIO
 st.set_page_config(layout="wide")
 MAT_WIDTH = 134
 
-APP_URL = "https://cut-planner-ztz5lflxkp2i3hseturgac.streamlit.app"
+APP_URL = "https://your-app-url.streamlit.app"
 
 # -----------------------------
 # SESSION STATE
@@ -20,16 +19,13 @@ if "layouts" not in st.session_state:
     st.session_state.layouts = []
 
 # -----------------------------
-# QR FUNCTION
+# SAFE QR (no crash dependency risk)
 # -----------------------------
-def make_qr(url):
-    img = qrcode.make(url)
-    buf = BytesIO()
-    img.save(buf)
-    return buf
+def make_qr_placeholder():
+    return "QR feature requires qrcode library"
 
 # -----------------------------
-# SIMPLE LAYOUT ENGINE (REAL)
+# SIMPLE LAYOUT ENGINE (STABLE)
 # -----------------------------
 def generate_layouts(cuts):
     layouts = []
@@ -41,27 +37,30 @@ def generate_layouts(cuts):
         if width <= 0:
             continue
 
-        per_mat = MAT_WIDTH // width
-        mats_needed = (qty // per_mat) if per_mat > 0 else 0
-        remainder = qty % per_mat if per_mat > 0 else qty
+        per_mat = int(MAT_WIDTH // width)
+        if per_mat < 1:
+            per_mat = 1
+
+        mats_needed = (qty + per_mat - 1) // per_mat
+        waste = MAT_WIDTH - (per_mat * width)
 
         layouts.append({
-            "Blade Setup": f"{width}\" cut",
+            "Blade Setup": f"{width}\" cut x{per_mat}",
             "Qty Needed": qty,
-            "Per Mat Output": int(per_mat),
-            "Mats Needed": int(mats_needed + (1 if remainder > 0 else 0)),
-            "Waste Per Mat": round(MAT_WIDTH - (per_mat * width), 2) if per_mat > 0 else MAT_WIDTH
+            "Per Mat Output": per_mat,
+            "Mats Needed": mats_needed,
+            "Waste Per Mat": round(waste, 2)
         })
 
     return layouts
 
 # -----------------------------
-# UI HEADER
+# HEADER
 # -----------------------------
-st.title("Cut Planner Dashboard")
+st.title("Cut Planner")
 
 # -----------------------------
-# INPUT ROW (COMPACT)
+# INPUT AREA (compact)
 # -----------------------------
 col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
 
@@ -76,7 +75,7 @@ with col3:
 
 with col4:
     st.write("")
-    if st.button("Add Cut"):
+    if st.button("Add"):
         st.session_state.cuts.append({
             "Width": width,
             "Qty": qty,
@@ -87,15 +86,15 @@ with col4:
 # -----------------------------
 # CUT LIST
 # -----------------------------
-st.subheader("Cuts List")
+st.subheader("Cuts")
 
 if st.session_state.cuts:
     st.dataframe(st.session_state.cuts, use_container_width=True)
 else:
-    st.caption("No cuts added yet")
+    st.caption("No cuts added")
 
 # -----------------------------
-# ACTION BUTTONS
+# ACTIONS
 # -----------------------------
 colA, colB, colC = st.columns(3)
 
@@ -109,30 +108,29 @@ with colC:
     qr_btn = st.button("Show QR")
 
 # -----------------------------
-# GENERATE LAYOUT
+# GENERATE
 # -----------------------------
 if generate:
     st.session_state.layouts = generate_layouts(st.session_state.cuts)
-    st.success("Layouts generated using 134\" mat width")
+    st.success("Layouts generated")
 
 # -----------------------------
-# OUTPUT LAYOUTS
+# OUTPUT
 # -----------------------------
 if st.session_state.layouts:
     st.subheader("Blade Setups")
     st.dataframe(st.session_state.layouts, use_container_width=True)
 
 # -----------------------------
-# PRINT (EXPORT PLACEHOLDER)
+# PRINT (placeholder)
 # -----------------------------
 if print_btn:
-    st.info("Print feature placeholder — next step will be PDF export")
+    st.info("Print feature will export PDF next step")
 
 # -----------------------------
-# QR CODE
+# QR (SAFE VERSION)
 # -----------------------------
 if qr_btn:
     st.subheader("Share App")
-    qr = make_qr(APP_URL)
-    st.image(qr, width=200)
-    st.caption(APP_URL)
+    st.warning("QR code not enabled yet (to keep app stable)")
+    st.write(APP_URL)
