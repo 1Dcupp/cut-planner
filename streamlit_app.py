@@ -1,6 +1,5 @@
 import streamlit as st
 from collections import Counter
-import math
 
 # -----------------------------
 # CONFIG
@@ -19,11 +18,8 @@ if "cuts" not in st.session_state:
 if "plan" not in st.session_state:
     st.session_state.plan = []
 
-if "summary" not in st.session_state:
-    st.session_state.summary = []
-
 # -----------------------------
-# DEMAND MAP
+# DEMAND
 # -----------------------------
 def build_needed(cuts):
     needed = Counter()
@@ -32,23 +28,20 @@ def build_needed(cuts):
     return needed
 
 # -----------------------------
-# TRUE MAT PACKER (CORE FIX)
+# MAT PACKER (UNCHANGED CORE)
 # -----------------------------
 def pack_mat(needed, produced):
 
-    # available widths still under allowed production
     available = [
         w for w in needed
         if produced[w] < needed[w] + OVER_LIMIT
     ]
 
-    # largest-first (critical for efficiency)
     available.sort(reverse=True)
 
     mat = []
     remaining = MAT_WIDTH
 
-    # keep filling until nothing fits
     while True:
         added = False
 
@@ -65,9 +58,9 @@ def pack_mat(needed, produced):
     return mat
 
 # -----------------------------
-# SOLVER
+# SOLVER (NOW WITH YIELD)
 # -----------------------------
-def solve(cuts):
+def solve(cuts, yield_per_mat):
 
     needed = build_needed(cuts)
     produced = Counter()
@@ -77,7 +70,6 @@ def solve(cuts):
 
     while True:
 
-        # stop condition: all requirements met (+overrun allowed)
         done = True
         for w in needed:
             if produced[w] < needed[w]:
@@ -92,17 +84,17 @@ def solve(cuts):
         if not mat:
             break
 
-        # update production (ONLY real pieces)
-        for w in mat:
-            if produced[w] < needed[w] + OVER_LIMIT:
-                produced[w] += 1
-
         key = tuple(sorted(mat))
         layout_counts[key] += 1
+
+        # APPLY YIELD MULTIPLIER HERE
+        for w in mat:
+            produced[w] += yield_per_mat
 
         output.append({
             "Blade Layout": " + ".join([f'{w}"' for w in key]),
             "Pieces per Mat": len(key),
+            "Yield per Mat": yield_per_mat,
             "Runs (Mats)": layout_counts[key],
             "Mat Fill": sum(key),
             "Waste": round(MAT_WIDTH - sum(key), 2)
@@ -124,20 +116,18 @@ def solve(cuts):
 # -----------------------------
 # UI
 # -----------------------------
-st.title("CUT PLANNER – FINAL FACTORY OPTIMIZER (134\")")
+st.title("CUT PLANNER – YIELD CONTROL VERSION (134\")")
 
-st.caption("True bin-packing cutter logic — stable, grouped, production-safe")
-
-# -----------------------------
-# INPUT
-# -----------------------------
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     width = st.number_input("Cut Width", step=0.5)
 
 with col2:
     qty = st.number_input("Qty Needed", step=1)
+
+with col3:
+    yield_per_mat = st.selectbox("Yield per Mat", [1, 2, 3])
 
 if st.button("Add Cut"):
     if width > 0 and qty > 0:
@@ -150,9 +140,6 @@ if st.button("Add Cut"):
 st.subheader("Cuts")
 st.dataframe(st.session_state.cuts, use_container_width=True)
 
-# -----------------------------
-# ACTIONS
-# -----------------------------
 colA, colB = st.columns(2)
 
 with colA:
@@ -162,7 +149,8 @@ with colB:
     clear = st.button("Clear All")
 
 if run:
-    st.session_state.plan, st.session_state.summary = solve(st.session_state.cuts)
+    st.session_state.plan, summary = solve(st.session_state.cuts, yield_per_mat)
+    st.session_state.summary = summary
 
 if clear:
     st.session_state.cuts = []
@@ -170,13 +158,10 @@ if clear:
     st.session_state.summary = []
     st.rerun()
 
-# -----------------------------
-# OUTPUT
-# -----------------------------
 if st.session_state.plan:
-    st.subheader("Blade Layouts (Grouped Runs)")
+    st.subheader("Layouts")
     st.dataframe(st.session_state.plan, use_container_width=True)
 
-if st.session_state.summary:
+if "summary" in st.session_state:
     st.subheader("Production Summary")
     st.dataframe(st.session_state.summary, use_container_width=True)
