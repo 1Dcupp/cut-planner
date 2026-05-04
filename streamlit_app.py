@@ -1,13 +1,15 @@
 import streamlit as st
+from itertools import combinations
 from io import BytesIO
+import qrcode
 
 # -----------------------------
 # CONFIG
 # -----------------------------
 st.set_page_config(layout="wide")
-MAT_WIDTH = 134
 
-APP_URL = "https://your-app-url.streamlit.app"
+MAT_WIDTH = 134
+APP_URL = "https://cut-planner-ztz5lflxkp2i3hseturgac.streamlit.app"
 
 # -----------------------------
 # SESSION STATE
@@ -19,48 +21,60 @@ if "layouts" not in st.session_state:
     st.session_state.layouts = []
 
 # -----------------------------
-# SAFE QR (no crash dependency risk)
+# QR
 # -----------------------------
-def make_qr_placeholder():
-    return "QR feature requires qrcode library"
+def make_qr(url):
+    img = qrcode.make(url)
+    buf = BytesIO()
+    img.save(buf)
+    return buf
 
 # -----------------------------
-# SIMPLE LAYOUT ENGINE (STABLE)
+# REAL OPTIMIZER (CORE ENGINE)
 # -----------------------------
 def generate_layouts(cuts):
+    widths = []
+
+    # expand into usable list
+    for c in cuts:
+        for _ in range(int(c["Qty"])):
+            widths.append(c["Width"])
+
+    if not widths:
+        return []
+
     layouts = []
 
-    for c in cuts:
-        width = c["Width"]
-        qty = c["Qty"]
+    # try combinations of up to 4 blades (keeps it fast + realistic)
+    for r in range(1, min(5, len(widths) + 1)):
+        for combo in combinations(widths, r):
 
-        if width <= 0:
-            continue
+            total = sum(combo)
 
-        per_mat = int(MAT_WIDTH // width)
-        if per_mat < 1:
-            per_mat = 1
+            if total > MAT_WIDTH:
+                continue
 
-        mats_needed = (qty + per_mat - 1) // per_mat
-        waste = MAT_WIDTH - (per_mat * width)
+            waste = MAT_WIDTH - total
 
-        layouts.append({
-            "Blade Setup": f"{width}\" cut x{per_mat}",
-            "Qty Needed": qty,
-            "Per Mat Output": per_mat,
-            "Mats Needed": mats_needed,
-            "Waste Per Mat": round(waste, 2)
-        })
+            layouts.append({
+                "Blade Setup": " + ".join([f"{w}\"" for w in combo]),
+                "Total Width": total,
+                "Waste": round(waste, 2),
+                "Pieces": len(combo)
+            })
 
-    return layouts
+    # rank best (least waste, most usage)
+    layouts.sort(key=lambda x: (x["Waste"], -x["Total Width"]))
 
-# -----------------------------
-# HEADER
-# -----------------------------
-st.title("Cut Planner")
+    return layouts[:20]  # top 20 best layouts
 
 # -----------------------------
-# INPUT AREA (compact)
+# UI
+# -----------------------------
+st.title("Cut Planner – Optimizer Mode (134\")")
+
+# -----------------------------
+# INPUT
 # -----------------------------
 col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
 
@@ -99,38 +113,31 @@ else:
 colA, colB, colC = st.columns(3)
 
 with colA:
-    generate = st.button("Generate Layout")
+    generate = st.button("Generate Best Layouts")
 
 with colB:
     print_btn = st.button("Print")
 
 with colC:
-    qr_btn = st.button("Show QR")
+    qr_btn = st.button("QR Code")
 
 # -----------------------------
 # GENERATE
 # -----------------------------
 if generate:
     st.session_state.layouts = generate_layouts(st.session_state.cuts)
-    st.success("Layouts generated")
+    st.success("Optimized layouts generated")
 
 # -----------------------------
 # OUTPUT
 # -----------------------------
 if st.session_state.layouts:
-    st.subheader("Blade Setups")
+    st.subheader("Best Blade Layouts (Ranked)")
+
     st.dataframe(st.session_state.layouts, use_container_width=True)
 
 # -----------------------------
-# PRINT (placeholder)
+# PRINT PLACEHOLDER
 # -----------------------------
 if print_btn:
-    st.info("Print feature will export PDF next step")
-
-# -----------------------------
-# QR (SAFE VERSION)
-# -----------------------------
-if qr_btn:
-    st.subheader("Share App")
-    st.warning("QR code not enabled yet (to keep app stable)")
-    st.write(APP_URL)
+    st.info("Next step: PDF print sheet export (ready
