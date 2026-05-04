@@ -18,8 +18,11 @@ if "cuts" not in st.session_state:
 if "plan" not in st.session_state:
     st.session_state.plan = []
 
+if "summary" not in st.session_state:
+    st.session_state.summary = []
+
 # -----------------------------
-# DEMAND
+# DEMAND BUILD
 # -----------------------------
 def build_needed(cuts):
     needed = Counter()
@@ -28,7 +31,7 @@ def build_needed(cuts):
     return needed
 
 # -----------------------------
-# MAT PACKER (UNCHANGED CORE)
+# TRUE BEST-FIT PACKING
 # -----------------------------
 def pack_mat(needed, produced):
 
@@ -37,39 +40,43 @@ def pack_mat(needed, produced):
         if produced[w] < needed[w] + OVER_LIMIT
     ]
 
+    # largest-first ordering
     available.sort(reverse=True)
 
     mat = []
     remaining = MAT_WIDTH
 
+    # CRITICAL FIX: keep scanning until NOTHING fits
     while True:
-        added = False
+        best_fit = None
 
         for w in available:
             if w <= remaining:
-                mat.append(w)
-                remaining -= w
-                added = True
+                best_fit = w
                 break
 
-        if not added:
+        if best_fit is None:
             break
+
+        mat.append(best_fit)
+        remaining -= best_fit
 
     return mat
 
 # -----------------------------
-# SOLVER (NOW WITH YIELD)
+# SOLVER
 # -----------------------------
-def solve(cuts, yield_per_mat):
+def solve(cuts):
 
     needed = build_needed(cuts)
     produced = Counter()
 
-    layout_counts = Counter()
+    layout_count = Counter()
     output = []
 
     while True:
 
+        # stop when all requirements met (within overrun limit)
         done = True
         for w in needed:
             if produced[w] < needed[w]:
@@ -84,18 +91,18 @@ def solve(cuts, yield_per_mat):
         if not mat:
             break
 
-        key = tuple(sorted(mat))
-        layout_counts[key] += 1
-
-        # APPLY YIELD MULTIPLIER HERE
+        # count production correctly (NO fake multipliers)
         for w in mat:
-            produced[w] += yield_per_mat
+            if produced[w] < needed[w] + OVER_LIMIT:
+                produced[w] += 1
+
+        key = tuple(sorted(mat))
+        layout_count[key] += 1
 
         output.append({
             "Blade Layout": " + ".join([f'{w}"' for w in key]),
             "Pieces per Mat": len(key),
-            "Yield per Mat": yield_per_mat,
-            "Runs (Mats)": layout_counts[key],
+            "Runs (Mats)": layout_count[key],
             "Mat Fill": sum(key),
             "Waste": round(MAT_WIDTH - sum(key), 2)
         })
@@ -116,18 +123,20 @@ def solve(cuts, yield_per_mat):
 # -----------------------------
 # UI
 # -----------------------------
-st.title("CUT PLANNER – YIELD CONTROL VERSION (134\")")
+st.title("CUT PLANNER – FINAL FACTORY OPTIMIZER (134\")")
 
-col1, col2, col3 = st.columns(3)
+st.caption("True production-grade bin packing system — stable, grouped, real output")
+
+# -----------------------------
+# INPUT
+# -----------------------------
+col1, col2 = st.columns(2)
 
 with col1:
     width = st.number_input("Cut Width", step=0.5)
 
 with col2:
     qty = st.number_input("Qty Needed", step=1)
-
-with col3:
-    yield_per_mat = st.selectbox("Yield per Mat", [1, 2, 3])
 
 if st.button("Add Cut"):
     if width > 0 and qty > 0:
@@ -140,6 +149,9 @@ if st.button("Add Cut"):
 st.subheader("Cuts")
 st.dataframe(st.session_state.cuts, use_container_width=True)
 
+# -----------------------------
+# ACTIONS
+# -----------------------------
 colA, colB = st.columns(2)
 
 with colA:
@@ -149,8 +161,7 @@ with colB:
     clear = st.button("Clear All")
 
 if run:
-    st.session_state.plan, summary = solve(st.session_state.cuts, yield_per_mat)
-    st.session_state.summary = summary
+    st.session_state.plan, st.session_state.summary = solve(st.session_state.cuts)
 
 if clear:
     st.session_state.cuts = []
@@ -158,10 +169,13 @@ if clear:
     st.session_state.summary = []
     st.rerun()
 
+# -----------------------------
+# OUTPUT
+# -----------------------------
 if st.session_state.plan:
-    st.subheader("Layouts")
+    st.subheader("Blade Layouts (Optimized Runs)")
     st.dataframe(st.session_state.plan, use_container_width=True)
 
-if "summary" in st.session_state:
+if st.session_state.summary:
     st.subheader("Production Summary")
     st.dataframe(st.session_state.summary, use_container_width=True)
