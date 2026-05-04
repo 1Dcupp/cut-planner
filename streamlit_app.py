@@ -1,6 +1,6 @@
 import streamlit as st
 from itertools import combinations
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 # -----------------------------
 # CONFIG
@@ -19,58 +19,84 @@ if "plan" not in st.session_state:
     st.session_state.plan = []
 
 # -----------------------------
-# OPTIMIZER ENGINE (FACTORY MODE)
+# BUILD DEMAND
 # -----------------------------
-def generate_layouts(cuts):
-    items = []
-
-    # expand quantity into list
+def build_demand(cuts):
+    demand = []
     for c in cuts:
-        for _ in range(int(c["Qty"])):
-            items.append(c["Width"])
+        demand += [c["Width"]] * int(c["Qty"])
+    return demand
 
-    if not items:
-        return []
+# -----------------------------
+# FIND BEST LAYOUT (GREEDY)
+# -----------------------------
+def build_layout(remaining):
+    remaining = sorted(remaining, reverse=True)
 
-    layout_counts = defaultdict(int)
-    layout_data = {}
+    layout = []
+    total = 0
 
-    # generate combinations (up to 4 blades per mat)
-    for r in range(1, min(5, len(items) + 1)):
-        for combo in combinations(items, r):
+    for w in remaining:
+        if total + w <= MAT_WIDTH:
+            layout.append(w)
+            total += w
 
-            total = sum(combo)
+    return layout
 
-            if total > MAT_WIDTH:
-                continue
+# -----------------------------
+# FACTORY SOLVER (WITH TRACKING)
+# -----------------------------
+def solve(cuts):
+    remaining = build_demand(cuts)
+    original_counts = Counter(remaining)
 
-            key = tuple(sorted(combo))
+    plan = []
+    used_counts = Counter()
 
-            layout_counts[key] += 1
+    while remaining:
+        layout = build_layout(remaining)
 
-            layout_data[key] = {
-                "Blade Setup": " + ".join([f"{w}\"" for w in key]),
-                "Pieces": len(key),
-                "Total Width": total,
-                "Waste": round(MAT_WIDTH - total, 2)
-            }
+        if not layout:
+            break
 
-    results = []
+        # apply layout once (one mat run)
+        for w in layout:
+            remaining.remove(w)
+            used_counts[w] += 1
 
-    for key, data in layout_data.items():
-        results.append({
-            **data,
-            "Runs (Mats Needed)": layout_counts[key]
+        plan.append({
+            "Blade Setup": " + ".join([f'{w}"' for w in layout]),
+            "Pieces per Mat": len(layout),
+            "Mat Fill": sum(layout),
+            "Waste": round(MAT_WIDTH - sum(layout), 2)
         })
 
-    results.sort(key=lambda x: (x["Waste"], -x["Total Width"]))
+    # -----------------------------
+    # PRODUCTION SUMMARY TABLE
+    # -----------------------------
+    summary = []
 
-    return results[:20]
+    for c in st.session_state.cuts:
+        w = c["Width"]
+        needed = int(c["Qty"])
+        produced = used_counts[w]
+        remaining_qty = max(0, needed - produced)
+        overrun = max(0, produced - needed)
+
+        summary.append({
+            "Width": w,
+            "Qty Needed": needed,
+            "Qty Produced": produced,
+            "Remaining": remaining_qty,
+            "Overrun": overrun
+        })
+
+    return plan, summary
 
 # -----------------------------
 # UI
 # -----------------------------
-st.title("Cut Planner Optimizer (134\" Factory Mode)")
+st.title("Cut Planner – Production Tracker (134\")")
 
 st.info(f"Total Cuts in List: {len(st.session_state.cuts)}")
 
@@ -90,37 +116,30 @@ with col3:
 
 with col4:
     if st.button("Add Cut"):
-
         if width > 0 and qty > 0:
             st.session_state.cuts.append({
                 "Width": width,
                 "Qty": qty,
                 "Gram": gram
             })
-
-            st.success(f"Added cut: {width}\" x {qty}")
-
+            st.success(f"Added {width}\" x {qty}")
             st.rerun()
         else:
-            st.error("Enter valid width and quantity")
+            st.error("Invalid input")
 
 # -----------------------------
 # CUT LIST
 # -----------------------------
 st.subheader("Cuts List")
-
-if st.session_state.cuts:
-    st.dataframe(st.session_state.cuts, use_container_width=True)
-else:
-    st.caption("No cuts added yet")
+st.dataframe(st.session_state.cuts, use_container_width=True)
 
 # -----------------------------
-# ACTION BUTTONS
+# ACTIONS
 # -----------------------------
 colA, colB, colC = st.columns(3)
 
 with colA:
-    generate = st.button("Generate Factory Plan")
+    generate = st.button("Generate Production Plan")
 
 with colB:
     clear = st.button("Clear All")
@@ -132,20 +151,21 @@ with colC:
 # GENERATE
 # -----------------------------
 if generate:
-    st.session_state.plan = generate_layouts(st.session_state.cuts)
-    st.success("Factory plan generated")
+    st.session_state.plan, st.session_state.summary = solve(st.session_state.cuts)
+    st.success("Production plan generated")
 
 # -----------------------------
-# CLEAR ALL
+# CLEAR
 # -----------------------------
 if clear:
     st.session_state.cuts = []
     st.session_state.plan = []
-    st.success("All cuts and layouts cleared")
+    st.session_state.summary = []
+    st.success("Reset complete")
     st.rerun()
 
 # -----------------------------
-# OUTPUT
+# OUTPUT: LAYOUTS
 # -----------------------------
 if st.session_state.plan:
     st.subheader("Factory Layouts")
@@ -153,7 +173,19 @@ if st.session_state.plan:
     st.dataframe(st.session_state.plan, use_container_width=True)
 
 # -----------------------------
-# PRINT PLACEHOLDER
+# OUTPUT: PRODUCTION SUMMARY
+# -----------------------------
+if "summary" in st.session_state and st.session_state.summary:
+    st.subheader("Production Tracking")
+
+    st.dataframe(st.session_state.summary, use_container_width=True)
+
+    total_mats = len(st.session_state.plan)
+
+    st.write(f"Total Mats Used: {total_mats}")
+
+# -----------------------------
+# PRINT
 # -----------------------------
 if print_btn:
-    st.info("Print export will be added in next upgrade")
+    st.info("Print export coming next upgrade")
