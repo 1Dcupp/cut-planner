@@ -1,7 +1,5 @@
 import streamlit as st
 from itertools import combinations
-from io import BytesIO
-import qrcode
 
 # -----------------------------
 # CONFIG
@@ -9,7 +7,6 @@ import qrcode
 st.set_page_config(layout="wide")
 
 MAT_WIDTH = 134
-APP_URL = "https://cut-planner-ztz5lflxkp2i3hseturgac.streamlit.app"
 
 # -----------------------------
 # SESSION STATE
@@ -21,16 +18,7 @@ if "layouts" not in st.session_state:
     st.session_state.layouts = []
 
 # -----------------------------
-# QR CODE
-# -----------------------------
-def make_qr(url):
-    img = qrcode.make(url)
-    buf = BytesIO()
-    img.save(buf)
-    return buf
-
-# -----------------------------
-# REAL OPTIMIZER (v1 stable)
+# OPTIMIZER ENGINE (STABLE V1)
 # -----------------------------
 def generate_layouts(cuts):
     items = []
@@ -45,7 +33,7 @@ def generate_layouts(cuts):
 
     layouts = []
 
-    # try combinations (up to 4 blades per layout for stability)
+    # combinations up to 4 blades per mat
     for r in range(1, min(5, len(items) + 1)):
         for combo in combinations(items, r):
 
@@ -63,18 +51,18 @@ def generate_layouts(cuts):
                 "Waste": round(waste, 2)
             })
 
-    # rank best layouts (least waste first, then most fill)
+    # best first (least waste, best fill)
     layouts.sort(key=lambda x: (x["Waste"], -x["Total Width"]))
 
     return layouts[:20]
 
 # -----------------------------
-# UI HEADER
+# UI
 # -----------------------------
 st.title("Cut Planner Optimizer (134\" System)")
 
 # -----------------------------
-# INPUT SECTION
+# INPUT AREA
 # -----------------------------
 col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
 
@@ -109,9 +97,9 @@ else:
     st.caption("No cuts added yet")
 
 # -----------------------------
-# ACTION BUTTONS
+# ACTIONS
 # -----------------------------
-colA, colB, colC = st.columns(3)
+colA, colB = st.columns(2)
 
 with colA:
     generate = st.button("Generate Layouts")
@@ -119,11 +107,8 @@ with colA:
 with colB:
     print_btn = st.button("Print")
 
-with colC:
-    qr_btn = st.button("QR Code")
-
 # -----------------------------
-# GENERATE LAYOUTS
+# GENERATE
 # -----------------------------
 if generate:
     st.session_state.layouts = generate_layouts(st.session_state.cuts)
@@ -141,13 +126,4 @@ if st.session_state.layouts:
 # PRINT PLACEHOLDER
 # -----------------------------
 if print_btn:
-    st.info("Print export (PDF) will be added next step")
-
-# -----------------------------
-# QR CODE
-# -----------------------------
-if qr_btn:
-    st.subheader("Share App")
-    qr = make_qr(APP_URL)
-    st.image(qr, width=200)
-    st.caption(APP_URL)
+    st.info("Print export will be added after optimizer is finalized")
