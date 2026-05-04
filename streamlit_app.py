@@ -1,6 +1,5 @@
 import streamlit as st
-from itertools import combinations
-from collections import defaultdict
+from collections import Counter
 
 # -----------------------------
 # CONFIG
@@ -15,70 +14,79 @@ MAT_WIDTH = 134
 if "cuts" not in st.session_state:
     st.session_state.cuts = []
 
-if "layouts" not in st.session_state:
-    st.session_state.layouts = []
+if "plan" not in st.session_state:
+    st.session_state.plan = []
 
 # -----------------------------
-# OPTIMIZER ENGINE (CLEAN + GROUPED)
+# BUILD FLAT ORDER LIST
 # -----------------------------
-def generate_layouts(cuts):
-    items = []
-
-    # expand quantities into individual pieces
+def build_demand(cuts):
+    demand = []
     for c in cuts:
-        for _ in range(int(c["Qty"])):
-            items.append(c["Width"])
+        demand += [c["Width"]] * int(c["Qty"])
+    return sorted(demand, reverse=True)
 
-    if not items:
-        return []
+# -----------------------------
+# FIND BEST LAYOUT FOR REMAINING PIECES
+# -----------------------------
+def find_best_layout(remaining):
+    best = None
+    best_score = 0
 
-    layout_counts = defaultdict(int)
-    layout_data = {}
+    # try building a mat greedily
+    for i in range(len(remaining)):
+        total = 0
+        layout = []
 
-    # generate combinations (up to 4 blades per mat)
-    for r in range(1, min(5, len(items) + 1)):
-        for combo in combinations(items, r):
+        for j in range(i, len(remaining)):
+            if total + remaining[j] <= MAT_WIDTH:
+                total += remaining[j]
+                layout.append(remaining[j])
 
-            total = sum(combo)
+        if layout:
+            score = total  # higher fill = better
 
-            if total > MAT_WIDTH:
-                continue
+            if score > best_score:
+                best_score = score
+                best = layout
 
-            # normalize so duplicates group together
-            key = tuple(sorted(combo))
+    return best
 
-            layout_counts[key] += 1
+# -----------------------------
+# MAIN SOLVER
+# -----------------------------
+def solve(cuts):
+    remaining = build_demand(cuts)
+    result = []
 
-            layout_data[key] = {
-                "Blade Setup": " + ".join([f"{w}\"" for w in key]),
-                "Total Width": total,
-                "Waste": round(MAT_WIDTH - total, 2),
-                "Pieces": len(key)
-            }
+    while remaining:
+        layout = find_best_layout(remaining)
 
-    # build final output
-    results = []
+        if not layout:
+            break
 
-    for key, data in layout_data.items():
-        results.append({
-            **data,
-            "Runs (Mats Needed)": layout_counts[key]
+        # remove used items
+        for w in layout:
+            remaining.remove(w)
+
+        result.append({
+            "Blade Setup": " + ".join([f'{w}"' for w in layout]),
+            "Pieces per Mat": len(layout),
+            "Mat Width Used": sum(layout),
+            "Waste": round(MAT_WIDTH - sum(layout), 2)
         })
 
-    # sort best first
-    results.sort(key=lambda x: (x["Waste"], -x["Total Width"]))
-
-    return results[:20]
+    return result
 
 # -----------------------------
 # UI
 # -----------------------------
-st.title("Cut Planner Optimizer (134\" Production System)")
+st.title("Cut Planner – Production Optimizer (134\")")
 
 # -----------------------------
 # INPUT
 # -----------------------------
-col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+col1, col2, col3, col4 = st.columns([2,2,2,1])
 
 with col1:
     width = st.number_input("Cut Width", step=0.5)
@@ -90,54 +98,34 @@ with col3:
     gram = st.number_input("Gram Weight", step=1)
 
 with col4:
-    st.write("")
-    if st.button("Add Cut"):
-        if width > 0 and qty > 0:
-            st.session_state.cuts.append({
-                "Width": width,
-                "Qty": qty,
-                "Gram": gram
-            })
+    if st.button("Add"):
+        st.session_state.cuts.append({
+            "Width": width,
+            "Qty": qty,
+            "Gram": gram
+        })
         st.rerun()
 
 # -----------------------------
 # CUT LIST
 # -----------------------------
-st.subheader("Cuts List")
-
-if st.session_state.cuts:
-    st.dataframe(st.session_state.cuts, use_container_width=True)
-else:
-    st.caption("No cuts added yet")
+st.subheader("Cuts")
+st.dataframe(st.session_state.cuts, use_container_width=True)
 
 # -----------------------------
-# ACTIONS
+# RUN OPTIMIZER
 # -----------------------------
-colA, colB = st.columns(2)
-
-with colA:
-    generate = st.button("Generate Optimized Layouts")
-
-with colB:
-    print_btn = st.button("Print")
-
-# -----------------------------
-# GENERATE
-# -----------------------------
-if generate:
-    st.session_state.layouts = generate_layouts(st.session_state.cuts)
-    st.success("Layouts generated (optimized + grouped)")
+if st.button("Generate Production Plan"):
+    st.session_state.plan = solve(st.session_state.cuts)
+    st.success("Production plan generated")
 
 # -----------------------------
 # OUTPUT
 # -----------------------------
-if st.session_state.layouts:
-    st.subheader("Best Blade Layouts (Ranked)")
+if st.session_state.plan:
+    st.subheader("Production Layouts (Real Mats)")
 
-    st.dataframe(st.session_state.layouts, use_container_width=True)
+    st.dataframe(st.session_state.plan, use_container_width=True)
 
-# -----------------------------
-# PRINT PLACEHOLDER
-# -----------------------------
-if print_btn:
-    st.info("Next step: PDF export for shop-floor printing (coming next upgrade)")
+    st.subheader("Summary")
+    st.write(f"Total Mats Needed: {len(st.session_state.plan)}")
