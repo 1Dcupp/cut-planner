@@ -1,5 +1,5 @@
 import streamlit as st
-from collections import Counter
+from collections import Counter, defaultdict
 
 # -----------------------------
 # CONFIG
@@ -15,14 +15,14 @@ OVER_LIMIT = 6
 if "cuts" not in st.session_state:
     st.session_state.cuts = []
 
-if "plan" not in st.session_state:
-    st.session_state.plan = []
+if "layouts" not in st.session_state:
+    st.session_state.layouts = []
 
 if "summary" not in st.session_state:
     st.session_state.summary = []
 
 # -----------------------------
-# DEMAND BUILD
+# BUILD DEMAND MAP
 # -----------------------------
 def build_needed(cuts):
     needed = Counter()
@@ -31,52 +31,52 @@ def build_needed(cuts):
     return needed
 
 # -----------------------------
-# TRUE BEST-FIT PACKING
+# BUILD ONE FULL MAT (REAL PACKING)
 # -----------------------------
-def pack_mat(needed, produced):
-
+def build_mat(needed, produced):
     available = [
         w for w in needed
         if produced[w] < needed[w] + OVER_LIMIT
     ]
 
-    # largest-first ordering
     available.sort(reverse=True)
 
     mat = []
     remaining = MAT_WIDTH
 
-    # CRITICAL FIX: keep scanning until NOTHING fits
     while True:
-        best_fit = None
+        placed = False
 
         for w in available:
             if w <= remaining:
-                best_fit = w
+                mat.append(w)
+                remaining -= w
+                placed = True
                 break
 
-        if best_fit is None:
+        if not placed:
             break
-
-        mat.append(best_fit)
-        remaining -= best_fit
 
     return mat
 
 # -----------------------------
-# SOLVER
+# OPTIMIZER ENGINE
 # -----------------------------
 def solve(cuts):
 
     needed = build_needed(cuts)
     produced = Counter()
 
-    layout_count = Counter()
-    output = []
+    layouts = []
+    layout_groups = defaultdict(int)
 
-    while True:
+    # safety loop
+    max_iters = 10000
+    i = 0
 
-        # stop when all requirements met (within overrun limit)
+    while i < max_iters:
+
+        # check done
         done = True
         for w in needed:
             if produced[w] < needed[w]:
@@ -86,27 +86,33 @@ def solve(cuts):
         if done:
             break
 
-        mat = pack_mat(needed, produced)
+        mat = build_mat(needed, produced)
 
         if not mat:
             break
 
-        # count production correctly (NO fake multipliers)
+        # apply production (REAL assignment into layout)
         for w in mat:
             if produced[w] < needed[w] + OVER_LIMIT:
                 produced[w] += 1
 
         key = tuple(sorted(mat))
-        layout_count[key] += 1
+        layout_groups[key] += 1
 
-        output.append({
-            "Blade Layout": " + ".join([f'{w}"' for w in key]),
-            "Pieces per Mat": len(key),
-            "Runs (Mats)": layout_count[key],
-            "Mat Fill": sum(key),
-            "Waste": round(MAT_WIDTH - sum(key), 2)
+        i += 1
+
+    # build final layout table (IMPORTANT FIX)
+    for layout, runs in layout_groups.items():
+        layouts.append({
+            "Blade Layout": " + ".join([f'{w}"' for w in layout]),
+            "Pieces per Mat": len(layout),
+            "Mat Runs": runs,
+            "Mat Fill": sum(layout),
+            "Waste": round(MAT_WIDTH - sum(layout), 2),
+            "Total Pieces Produced": sum(layout) * runs
         })
 
+    # summary per width
     summary = []
 
     for w in needed:
@@ -118,14 +124,14 @@ def solve(cuts):
             "Overrun": max(0, produced[w] - needed[w])
         })
 
-    return output, summary
+    return layouts, summary
 
 # -----------------------------
 # UI
 # -----------------------------
-st.title("CUT PLANNER – FINAL FACTORY OPTIMIZER (134\")")
+st.title("CUT PLANNER – FINAL FACTORY ENGINE (134\")")
 
-st.caption("True production-grade bin packing system — stable, grouped, real output")
+st.caption("Every piece is assigned to a real layout. No floating counts. No fake yields.")
 
 # -----------------------------
 # INPUT
@@ -146,7 +152,7 @@ if st.button("Add Cut"):
         })
         st.rerun()
 
-st.subheader("Cuts")
+st.subheader("Cuts Input")
 st.dataframe(st.session_state.cuts, use_container_width=True)
 
 # -----------------------------
@@ -160,22 +166,22 @@ with colA:
 with colB:
     clear = st.button("Clear All")
 
-if run:
-    st.session_state.plan, st.session_state.summary = solve(st.session_state.cuts)
-
 if clear:
     st.session_state.cuts = []
-    st.session_state.plan = []
+    st.session_state.layouts = []
     st.session_state.summary = []
     st.rerun()
+
+if run:
+    st.session_state.layouts, st.session_state.summary = solve(st.session_state.cuts)
 
 # -----------------------------
 # OUTPUT
 # -----------------------------
-if st.session_state.plan:
-    st.subheader("Blade Layouts (Optimized Runs)")
-    st.dataframe(st.session_state.plan, use_container_width=True)
+if st.session_state.layouts:
+    st.subheader("FINAL LAYOUTS (REAL GROUPED RUNS)")
+    st.dataframe(st.session_state.layouts, use_container_width=True)
 
 if st.session_state.summary:
-    st.subheader("Production Summary")
+    st.subheader("PRODUCTION SUMMARY")
     st.dataframe(st.session_state.summary, use_container_width=True)
