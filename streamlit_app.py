@@ -1,69 +1,91 @@
 import streamlit as st
-import pandas as pd
 
 st.set_page_config(layout="wide")
 
-st.title("DJ's Cut Planner")
+# ----------------------------
+# SESSION STATE
+# ----------------------------
+if "cuts" not in st.session_state:
+    st.session_state.cuts = []
 
-# =========================
-# TOP INPUT TABLE
-# =========================
-st.subheader("Cut Input Sheet")
+if "layouts" not in st.session_state:
+    st.session_state.layouts = []
 
-rows = 10
+# ----------------------------
+# HEADER (compact)
+# ----------------------------
+st.title("Cut Planner Dashboard")
 
-input_data = pd.DataFrame({
-    "Cut Width": ["" for _ in range(rows)],
-    "Qty Needed": ["" for _ in range(rows)],
-    "Gram Weight": ["" for _ in range(rows)],
-    "Loft": ["" for _ in range(rows)],
-    "Cuts Per Mat": ["" for _ in range(rows)],
-    "Qty Fulfilled": ["" for _ in range(rows)],
-    "Qty Remaining": ["" for _ in range(rows)],
-    "Status": ["" for _ in range(rows)],
-})
+# ----------------------------
+# INPUT ROW (compact, no scrolling)
+# ----------------------------
+col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
 
-edited_input = st.data_editor(input_data, num_rows="dynamic", use_container_width=True)
-
-# =========================
-# SIDE PANEL
-# =========================
-col1, col2 = st.columns([3, 2])
+with col1:
+    width = st.number_input("Cut Width", step=0.5)
 
 with col2:
-    st.markdown("### Settings")
-    max_width = st.number_input("Max Width", value=134)
-    min_layout = st.number_input("Min Layout", value=110)
-    small_cut = st.number_input("Small Cut Limit", value=12)
-    alt_small = st.checkbox("Alternate Small Sizes")
+    qty = st.number_input("Qty Needed", step=1)
 
-    st.button("Generate Layout")
-    st.button("Print")
-    st.button("Clean")
+with col3:
+    gram = st.number_input("Gram Weight", step=1)
 
-# =========================
-# BLADE SETUP TABLE
-# =========================
-st.subheader("Blade Setup")
+with col4:
+    st.write("")
+    if st.button("Add Cut"):
+        st.session_state.cuts.append({
+            "Width": width,
+            "Qty": qty,
+            "Gram": gram
+        })
+        st.rerun()
 
-layout_rows = 10
+# ----------------------------
+# CURRENT INPUT TABLE
+# ----------------------------
+st.subheader("Cuts List")
 
-blade_data = pd.DataFrame({
-    "Layout Name": ["" for _ in range(layout_rows)],
-    "Slot 1": ["" for _ in range(layout_rows)],
-    "Slot 2": ["" for _ in range(layout_rows)],
-    "Slot 3": ["" for _ in range(layout_rows)],
-    "Slot 4": ["" for _ in range(layout_rows)],
-    "Slot 5": ["" for _ in range(layout_rows)],
-    "Slot 6": ["" for _ in range(layout_rows)],
-    "Slot 7": ["" for _ in range(layout_rows)],
-    "Slot 8": ["" for _ in range(layout_rows)],
-    "Total Width": ["" for _ in range(layout_rows)],
-    "Fill %": ["" for _ in range(layout_rows)],
-    "Waste": ["" for _ in range(layout_rows)],
-    "Repeat Times": ["" for _ in range(layout_rows)],
-})
+if st.session_state.cuts:
+    st.dataframe(st.session_state.cuts, use_container_width=True)
+else:
+    st.caption("No cuts added yet")
 
-edited_blade = st.data_editor(blade_data, use_container_width=True)
+# ----------------------------
+# ACTION ROW (compact buttons)
+# ----------------------------
+colA, colB, colC = st.columns(3)
 
-st.caption("DJ's Cut Planner")
+with colA:
+    generate = st.button("Generate Layout")
+
+with colB:
+    print_btn = st.button("Print")
+
+with colC:
+    qr_btn = st.button("QR Code")
+
+# ----------------------------
+# OUTPUT AREA
+# ----------------------------
+st.divider()
+
+# ----------------------------
+# PLACEHOLDER LOGIC (safe so app won't crash)
+# ----------------------------
+if generate:
+    st.session_state.layouts = [
+        {"Layout": "Demo Layout 1", "Mat Usage": "124 in", "Waste": "4 in"},
+        {"Layout": "Demo Layout 2", "Mat Usage": "118 in", "Waste": "10 in"}
+    ]
+
+    st.success("Layout generated")
+
+if st.session_state.layouts:
+    st.subheader("Generated Layouts")
+    st.dataframe(st.session_state.layouts, use_container_width=True)
+
+if print_btn:
+    st.info("Print feature placeholder (we will connect PDF export next)")
+
+if qr_btn:
+    st.info("QR feature placeholder (next step we add real QR code)")
