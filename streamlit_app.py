@@ -1,5 +1,5 @@
 import streamlit as st
-from collections import Counter
+from collections import Counter, defaultdict
 import itertools
 
 # -----------------------------
@@ -23,13 +23,13 @@ if "summary" not in st.session_state:
     st.session_state.summary = []
 
 # -----------------------------
-# DEMAND BUILDER
+# BUILD DEMAND
 # -----------------------------
 def build_needed(cuts, yield_mult):
     needed = Counter()
     for c in cuts:
-        needed[float(c["Width"])] += int(c["Qty"]) * yield_mult
-    return needed
+        needed[float(c["Width"])] += int(c["Qty"])
+    return needed, yield_mult
 
 # -----------------------------
 # GENERATE ALL LAYOUTS
@@ -45,34 +45,24 @@ def generate_layouts(widths):
     return list(layouts)
 
 # -----------------------------
-# SCORE LAYOUT AGAINST CURRENT DEMAND
+# SCORE LAYOUTS (pure efficiency)
 # -----------------------------
-def score_layout(layout, needed, produced):
-
-    # how useful is this layout RIGHT NOW?
-    usefulness = 0
-
-    for w in layout:
-        if produced[w] < needed[w]:
-            usefulness += 1
-
+def score_layout(layout):
     fill = sum(layout)
     waste = MAT_WIDTH - fill
-
-    return usefulness, fill, -waste
+    efficiency = fill / MAT_WIDTH
+    return efficiency, -waste
 
 # -----------------------------
-# PICK BEST LAYOUT (DYNAMIC)
+# PICK BEST LAYOUT (based on efficiency)
 # -----------------------------
-def pick_best_layout(layouts, needed, produced):
-
+def pick_best_layout(layouts):
     best = None
-    best_score = (-1, -1, -999)
+    best_score = (-1, -999)
 
     for l in layouts:
-        score = score_layout(l, needed, produced)
+        score = score_layout(l)
 
-        # prioritize usefulness first, then efficiency
         if score > best_score:
             best_score = score
             best = l
@@ -80,22 +70,22 @@ def pick_best_layout(layouts, needed, produced):
     return best
 
 # -----------------------------
-# RUN ONE MAT
+# APPLY PRODUCTION CORRECTLY
 # -----------------------------
-def run_mat(layout, needed, produced):
+def apply_production(layout, needed, produced, yield_mult):
+
+    # IMPORTANT FIX:
+    # each WIDTH gets multiplied individually
 
     for w in layout:
-        if produced[w] < needed[w] + OVER_LIMIT:
-            produced[w] += 1
-
-    return layout
+        produced[w] += yield_mult
 
 # -----------------------------
-# SOLVER (FULL ADAPTIVE LOOP)
+# SOLVER
 # -----------------------------
 def solve(cuts, yield_mult):
 
-    needed = build_needed(cuts, yield_mult)
+    needed, yield_mult = build_needed(cuts, yield_mult)
     produced = Counter()
 
     widths = list(needed.keys())
@@ -108,55 +98,68 @@ def solve(cuts, yield_mult):
 
     while i < max_iters:
 
-        # check if done
+        # check completion
         done = True
         for w in needed:
-            if produced[w] < needed[w]:
+            if produced[w] < needed[w] * yield_mult:
                 done = False
                 break
 
         if done:
             break
 
-        # pick BEST layout based on CURRENT state
-        best = pick_best_layout(all_layouts, needed, produced)
+        # pick best layout globally
+        best = pick_best_layout(all_layouts)
 
         if not best:
             break
 
         # run ONE mat
-        run_mat(best, needed, produced)
+        apply_production(best, needed, produced, yield_mult)
 
         layout_history.append(best)
 
         i += 1
 
     # -----------------------------
-    # GROUP RESULTS
+    # GROUP LAYOUTS
     # -----------------------------
     grouped = Counter(layout_history)
 
     layouts = []
 
     for layout, runs in grouped.items():
+        per_layout_production = Counter()
+
+        for w in layout:
+            per_layout_production[w] += 1
+
         layouts.append({
             "Blade Layout": " + ".join([f'{w}"' for w in layout]),
             "Pieces per Mat": len(layout),
             "Runs (Mats)": runs,
             "Mat Fill": sum(layout),
             "Waste": round(MAT_WIDTH - sum(layout), 2),
-            "Total Produced": sum(layout) * runs
+
+            # FIXED TRUE OUTPUT
+            "Total Production (Corrected)": {
+                str(w): per_layout_production[w] * runs * yield_mult
+                for w in per_layout_production
+            }
         })
 
+    # -----------------------------
+    # SUMMARY (TRUE ACCURATE)
+    # -----------------------------
     summary = []
 
     for w in needed:
         summary.append({
             "Width": w,
-            "Needed": needed[w],
+            "Needed": needed[w] * yield_mult,
             "Produced": produced[w],
-            "Remaining": max(0, needed[w] - produced[w]),
-            "Overrun": max(0, produced[w] - needed[w])
+            "Remaining": max(0, (needed[w] * yield_mult) - produced[w]),
+            "Overrun": max(0, produced[w] - (needed[w] * yield_mult))
         })
 
     return layouts, summary
@@ -164,9 +167,9 @@ def solve(cuts, yield_mult):
 # -----------------------------
 # UI
 # -----------------------------
-st.title("CUT PLANNER v5 – ADAPTIVE FACTORY ENGINE (134\")")
+st.title("CUT PLANNER v6 – PRODUCTION-CORRECT ENGINE (134\")")
 
-st.caption("Switches layouts dynamically based on remaining demand")
+st.caption("Fixes per-width yield math (real factory logic)")
 
 col1, col2, col3 = st.columns(3)
 
@@ -211,9 +214,9 @@ if run:
 # OUTPUT
 # -----------------------------
 if st.session_state.layouts:
-    st.subheader("PRODUCTION LAYOUTS (ADAPTIVE)")
+    st.subheader("PRODUCTION LAYOUTS (v6 CORRECTED)")
     st.dataframe(st.session_state.layouts, use_container_width=True)
 
 if st.session_state.summary:
-    st.subheader("SUMMARY")
+    st.subheader("TRUE PRODUCTION SUMMARY")
     st.dataframe(st.session_state.summary, use_container_width=True)
