@@ -6,7 +6,6 @@ import itertools
 # CONFIG
 # -----------------------------
 st.set_page_config(layout="wide")
-
 MAT_WIDTH = 134
 
 # -----------------------------
@@ -16,12 +15,12 @@ if "cuts" not in st.session_state:
     st.session_state.cuts = []
 
 # -----------------------------
-# BUILD DEMAND (APPLY YIELD)
+# BUILD DEMAND
 # -----------------------------
-def build_demand(cuts, yield_mult):
+def build_demand(cuts):
     d = Counter()
     for c in cuts:
-        d[float(c["Width"])] += int(c["Qty"]) * yield_mult
+        d[float(c["Width"])] += int(c["Qty"])
     return d
 
 # -----------------------------
@@ -38,77 +37,78 @@ def generate_layouts(widths):
     return list(layouts)
 
 # -----------------------------
-# PRODUCTION PER RUN (CRITICAL FIX)
-# -----------------------------
-def production_per_run(layout, yield_mult):
-    prod = Counter()
-    for w in layout:
-        prod[w] += yield_mult
-    return prod
-
-# -----------------------------
-# SCORE LAYOUT (efficiency bias)
+# SCORE (GLOBAL IMPACT)
 # -----------------------------
 def score(layout, demand):
+    coverage = sum(1 for w in layout if demand[w] > 0)
     fill = sum(layout)
     waste = MAT_WIDTH - fill
 
-    coverage = sum(1 for w in layout if demand[w] > 0)
-
-    return (coverage * 10) + (len(layout) * 2) - (waste * 0.1)
+    # prefer fewer unique setups + higher coverage
+    return (coverage * 20) + (fill / MAT_WIDTH * 10) - (len(set(layout)) * 2) - waste
 
 # -----------------------------
-# SOLVER (FIXED LOGIC)
+# HOW MANY RUNS DOES LAYOUT NEED
 # -----------------------------
-def solve(cuts, yield_mult):
+def required_runs(layout, demand):
+    # how many times we need to run this layout to satisfy its weakest link
+    runs = float("inf")
 
-    demand = build_demand(cuts, yield_mult)
+    for w in layout:
+        if demand[w] > 0:
+            runs = min(runs, demand[w])
+
+    return max(0, int(runs if runs != float("inf") else 0))
+
+# -----------------------------
+# APPLY LAYOUT
+# -----------------------------
+def apply(layout, runs, demand):
+    for w in layout:
+        demand[w] -= runs
+        if demand[w] < 0:
+            demand[w] = 0
+
+# -----------------------------
+# SOLVER (LOCKED LAYOUT SYSTEM)
+# -----------------------------
+def solve(cuts):
+
+    demand = build_demand(cuts)
     widths = list(demand.keys())
     layouts = generate_layouts(widths)
 
-    schedule = Counter()
+    # STEP 1: rank all layouts ONCE
+    ranked = sorted(layouts, key=lambda l: score(l, demand), reverse=True)
 
-    while any(v > 0 for v in demand.values()):
+    # STEP 2: LOCK TOP 3 ONLY
+    locked_layouts = ranked[:3]
 
-        best_layout = max(layouts, key=lambda l: score(l, demand))
+    schedule = {}
 
-        prod = production_per_run(best_layout, yield_mult)
+    # STEP 3: allocate demand ONLY across locked layouts
+    for layout in locked_layouts:
 
-        # determine max runs we can do safely
-        runs = float("inf")
+        runs = required_runs(layout, demand)
 
-        for w in prod:
-            if prod[w] > 0:
-                runs = min(runs, (demand[w] // prod[w]) if prod[w] > 0 else 0)
-
-        # force at least 1 run
-        runs = max(1, int(runs))
-
-        # apply production properly
-        for w in prod:
-            demand[w] -= prod[w] * runs
-            if demand[w] < 0:
-                demand[w] = 0
-
-        schedule[best_layout] += runs
+        if runs > 0:
+            apply(layout, runs, demand)
+            schedule[layout] = runs
 
     return schedule, demand
 
 # -----------------------------
 # UI
 # -----------------------------
-st.title("CUT PLANNER v13 — TRUE PRODUCTION ENGINE")
+st.title("CUT PLANNER v14 — LOCKED LAYOUT ENGINE")
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
 with col1:
     width = st.number_input("Cut Width", step=0.5)
 
 with col2:
     qty = st.number_input("Qty Needed", step=1)
-
-with col3:
-    yield_mult = st.selectbox("Yield Mode", [1, 2, 3])
 
 if st.button("Add Cut"):
     st.session_state.cuts.append({"Width": width, "Qty": qty})
@@ -121,21 +121,21 @@ if st.button("Clear All"):
 st.subheader("Cuts")
 st.dataframe(st.session_state.cuts, use_container_width=True)
 
-run = st.button("Generate Final Plan")
+run = st.button("Generate Production Plan")
 
 # -----------------------------
 # OUTPUT
 # -----------------------------
 if run:
 
-    schedule, remaining = solve(st.session_state.cuts, yield_mult)
+    schedule, remaining = solve(st.session_state.cuts)
 
-    st.subheader("FINAL PRODUCTION PLAN")
+    st.subheader("LOCKED PRODUCTION PLAN (FINAL STRUCTURE)")
 
-    total_mats = 0
+    total_runs = 0
 
     for layout, runs in schedule.items():
-        total_mats += runs
+        total_runs += runs
 
         st.markdown(f"""
 ### Layout
@@ -143,10 +143,9 @@ if run:
 
 - RUN COUNT: **{runs}**
 - Pieces per run: {len(layout)}
-- Total output per run: {Counter({w: yield_mult for w in layout})}
 """)
 
-    st.success(f"TOTAL MATS REQUIRED: {total_mats}")
+    st.success(f"TOTAL MATS REQUIRED: {total_runs}")
 
-    st.subheader("REMAINING (should be ~0)")
+    st.subheader("REMAINING DEMAND (should be near 0)")
     st.dataframe(dict(remaining))
