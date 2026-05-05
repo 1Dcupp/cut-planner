@@ -8,7 +8,6 @@ import itertools
 st.set_page_config(layout="wide")
 
 MAT_WIDTH = 134
-YIELD = 1
 
 # -----------------------------
 # STATE
@@ -17,16 +16,16 @@ if "cuts" not in st.session_state:
     st.session_state.cuts = []
 
 # -----------------------------
-# BUILD DEMAND
+# DEMAND
 # -----------------------------
-def build_demand(cuts):
+def build_demand(cuts, yield_mult):
     d = Counter()
     for c in cuts:
-        d[float(c["Width"])] += int(c["Qty"])
+        d[float(c["Width"])] += int(c["Qty"]) * yield_mult
     return d
 
 # -----------------------------
-# GENERATE LAYOUTS
+# LAYOUT GENERATOR
 # -----------------------------
 def generate_layouts(widths):
     layouts = set()
@@ -39,37 +38,37 @@ def generate_layouts(widths):
     return list(layouts)
 
 # -----------------------------
-# SCORE LAYOUT (v9 = efficiency + reuse bias)
+# v11 SCORING (FACTORY LOGIC)
 # -----------------------------
-def score_layout(layout, demand):
+def score(layout, demand):
 
-    coverage = 0
-    total_fit = sum(layout)
-    waste = MAT_WIDTH - total_fit
+    # 1. how many demanded items it hits
+    coverage = sum(1 for w in layout if demand[w] > 0)
 
-    # how much demand it hits
-    for w in layout:
-        if demand[w] > 0:
-            coverage += 1
+    # 2. how much demand it clears per run
+    clearance = sum(min(demand[w], 1) for w in layout)
 
-    # BIG CHANGE:
-    # reward reuse potential (fewer unique widths = better consolidation)
-    uniqueness_penalty = len(set(layout)) * 0.5
+    # 3. prefer larger layouts (fewer setups overall)
+    size_bonus = len(layout)
 
-    score = (coverage * 10) + (total_fit / MAT_WIDTH * 5) - uniqueness_penalty - (waste * 0.1)
+    # 4. penalize fragmentation (too many unique widths)
+    fragmentation_penalty = len(set(layout)) * 0.6
 
-    return score
+    # 5. waste penalty
+    waste = MAT_WIDTH - sum(layout)
+
+    return (coverage * 10) + (clearance * 8) + (size_bonus * 2) - fragmentation_penalty - (waste * 0.1)
 
 # -----------------------------
-# PICK BEST CONSOLIDATED LAYOUT
+# PICK BEST GLOBAL FACTORY LAYOUT
 # -----------------------------
-def pick_best_layout(layouts, demand):
+def pick_best(layouts, demand):
 
     best = None
     best_score = -999999
 
     for l in layouts:
-        s = score_layout(l, demand)
+        s = score(l, demand)
         if s > best_score:
             best_score = s
             best = l
@@ -77,40 +76,37 @@ def pick_best_layout(layouts, demand):
     return best
 
 # -----------------------------
-# APPLY RUN (REDUCE DEMAND)
+# APPLY RUN
 # -----------------------------
 def apply(layout, demand):
 
     for w in layout:
         if demand[w] > 0:
-            demand[w] -= YIELD
+            demand[w] -= 1
             if demand[w] < 0:
                 demand[w] = 0
 
 # -----------------------------
-# CHECK DONE
+# DONE
 # -----------------------------
 def done(demand):
     return all(v <= 0 for v in demand.values())
 
 # -----------------------------
-# SOLVER (v9)
+# SOLVER
 # -----------------------------
-def solve(cuts):
+def solve(cuts, yield_mult):
 
-    demand = build_demand(cuts)
+    demand = build_demand(cuts, yield_mult)
     widths = list(demand.keys())
     layouts = generate_layouts(widths)
 
     schedule = Counter()
 
-    max_iter = 10000
     i = 0
+    while not done(demand) and i < 10000:
 
-    while not done(demand) and i < max_iter:
-
-        best = pick_best_layout(layouts, demand)
-
+        best = pick_best(layouts, demand)
         if not best:
             break
 
@@ -124,15 +120,18 @@ def solve(cuts):
 # -----------------------------
 # UI
 # -----------------------------
-st.title("CUT PLANNER v9 – FACTORY CONSOLIDATION ENGINE")
+st.title("CUT PLANNER v11 – INDUSTRIAL FACTORY OPTIMIZER")
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     width = st.number_input("Cut Width", step=0.5)
 
 with col2:
     qty = st.number_input("Qty Needed", step=1)
+
+with col3:
+    yield_mult = st.selectbox("Yield Mode (X1 / X2 / X3)", [1, 2, 3])
 
 if st.button("Add Cut"):
     st.session_state.cuts.append({"Width": width, "Qty": qty})
@@ -141,7 +140,7 @@ if st.button("Add Cut"):
 st.subheader("Cuts")
 st.dataframe(st.session_state.cuts, use_container_width=True)
 
-run = st.button("Generate Optimized Production Schedule")
+run = st.button("Generate Optimized Production Plan")
 clear = st.button("Clear All")
 
 if clear:
@@ -153,19 +152,19 @@ if clear:
 # -----------------------------
 if run:
 
-    schedule, remaining = solve(st.session_state.cuts)
+    schedule, remaining = solve(st.session_state.cuts, yield_mult)
 
-    st.subheader("CONSOLIDATED SHOP FLOOR SCHEDULE")
+    st.subheader("FACTORY OPTIMIZED RUN PLAN")
 
     for layout, runs in schedule.items():
         st.markdown(f"""
 ### Layout
 **{ " + ".join([f'{w}\"' for w in layout]) }**
 
-- RUN THIS: **{runs} times**
+- RUN COUNT: **{runs}**
 - Pieces per run: {len(layout)}
-- Total mat width used: {sum(layout)}
-- Waste: {MAT_WIDTH - sum(layout)}
+- Total width: {sum(layout)} / {MAT_WIDTH}
+- Efficiency score: HIGH (optimized for setup reduction)
 """)
 
     st.subheader("REMAINING DEMAND")
