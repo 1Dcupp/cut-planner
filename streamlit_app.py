@@ -1,5 +1,6 @@
 import streamlit as st
 from collections import Counter, defaultdict
+import itertools
 
 # -----------------------------
 # CONFIG
@@ -22,61 +23,80 @@ if "summary" not in st.session_state:
     st.session_state.summary = []
 
 # -----------------------------
-# BUILD DEMAND MAP
+# BUILD DEMAND
 # -----------------------------
-def build_needed(cuts):
+def build_needed(cuts, yield_mult):
     needed = Counter()
     for c in cuts:
-        needed[float(c["Width"])] += int(c["Qty"])
+        needed[float(c["Width"])] += int(c["Qty"]) * yield_mult
     return needed
 
 # -----------------------------
-# BUILD ONE FULL MAT (REAL PACKING)
+# GENERATE POSSIBLE COMBOS (KEY FIX)
+# -----------------------------
+def generate_combos(widths, max_width):
+    combos = []
+
+    # allow repeated use, small controlled depth
+    for r in range(1, 6):
+        for combo in itertools.combinations_with_replacement(widths, r):
+            if sum(combo) <= max_width:
+                combos.append(tuple(sorted(combo, reverse=True)))
+
+    # remove duplicates
+    return list(set(combos))
+
+# -----------------------------
+# PICK BEST FIT COMBO
+# -----------------------------
+def best_fit_combo(widths, remaining):
+    best = None
+    best_fill = 0
+
+    combos = generate_combos(widths, MAT_WIDTH)
+
+    for c in combos:
+        total = sum(c)
+        if total <= remaining and total > best_fill:
+            best = c
+            best_fill = total
+
+    return best
+
+# -----------------------------
+# BUILD ONE MAT (REAL OPTIMIZER)
 # -----------------------------
 def build_mat(needed, produced):
-    available = [
-        w for w in needed
-        if produced[w] < needed[w] + OVER_LIMIT
-    ]
 
-    available.sort(reverse=True)
-
+    widths = list(needed.keys())
     mat = []
     remaining = MAT_WIDTH
 
     while True:
-        placed = False
 
-        for w in available:
-            if w <= remaining:
-                mat.append(w)
-                remaining -= w
-                placed = True
-                break
+        combo = best_fit_combo(widths, remaining)
 
-        if not placed:
+        if not combo:
             break
+
+        mat.extend(combo)
+        remaining -= sum(combo)
 
     return mat
 
 # -----------------------------
-# OPTIMIZER ENGINE
+# SOLVER
 # -----------------------------
-def solve(cuts):
+def solve(cuts, yield_mult):
 
-    needed = build_needed(cuts)
+    needed = build_needed(cuts, yield_mult)
     produced = Counter()
 
-    layouts = []
     layout_groups = defaultdict(int)
+    layouts = []
 
-    # safety loop
-    max_iters = 10000
-    i = 0
+    while True:
 
-    while i < max_iters:
-
-        # check done
         done = True
         for w in needed:
             if produced[w] < needed[w]:
@@ -91,7 +111,7 @@ def solve(cuts):
         if not mat:
             break
 
-        # apply production (REAL assignment into layout)
+        # production tracking
         for w in mat:
             if produced[w] < needed[w] + OVER_LIMIT:
                 produced[w] += 1
@@ -99,26 +119,23 @@ def solve(cuts):
         key = tuple(sorted(mat))
         layout_groups[key] += 1
 
-        i += 1
-
-    # build final layout table (IMPORTANT FIX)
+    # build output table
     for layout, runs in layout_groups.items():
         layouts.append({
             "Blade Layout": " + ".join([f'{w}"' for w in layout]),
             "Pieces per Mat": len(layout),
-            "Mat Runs": runs,
+            "Runs (Mats)": runs,
             "Mat Fill": sum(layout),
             "Waste": round(MAT_WIDTH - sum(layout), 2),
-            "Total Pieces Produced": sum(layout) * runs
+            "Total Pieces": sum(layout) * runs
         })
 
-    # summary per width
     summary = []
 
     for w in needed:
         summary.append({
             "Width": w,
-            "Needed": needed[w],
+            "Needed (Adj)": needed[w],
             "Produced": produced[w],
             "Remaining": max(0, needed[w] - produced[w]),
             "Overrun": max(0, produced[w] - needed[w])
@@ -129,20 +146,20 @@ def solve(cuts):
 # -----------------------------
 # UI
 # -----------------------------
-st.title("CUT PLANNER – FINAL FACTORY ENGINE (134\")")
+st.title("CUT PLANNER – FINAL MIXED LAYOUT ENGINE (134\")")
 
-st.caption("Every piece is assigned to a real layout. No floating counts. No fake yields.")
+st.caption("Now supports X1 / X2 / X3 + true mixed-size layouts")
 
-# -----------------------------
-# INPUT
-# -----------------------------
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     width = st.number_input("Cut Width", step=0.5)
 
 with col2:
     qty = st.number_input("Qty Needed", step=1)
+
+with col3:
+    yield_mult = st.selectbox("Yield Mode", [1, 2, 3])
 
 if st.button("Add Cut"):
     if width > 0 and qty > 0:
@@ -152,12 +169,9 @@ if st.button("Add Cut"):
         })
         st.rerun()
 
-st.subheader("Cuts Input")
+st.subheader("Cuts")
 st.dataframe(st.session_state.cuts, use_container_width=True)
 
-# -----------------------------
-# ACTIONS
-# -----------------------------
 colA, colB = st.columns(2)
 
 with colA:
@@ -173,13 +187,10 @@ if clear:
     st.rerun()
 
 if run:
-    st.session_state.layouts, st.session_state.summary = solve(st.session_state.cuts)
+    st.session_state.layouts, st.session_state.summary = solve(st.session_state.cuts, yield_mult)
 
-# -----------------------------
-# OUTPUT
-# -----------------------------
 if st.session_state.layouts:
-    st.subheader("FINAL LAYOUTS (REAL GROUPED RUNS)")
+    st.subheader("OPTIMIZED MIXED LAYOUTS")
     st.dataframe(st.session_state.layouts, use_container_width=True)
 
 if st.session_state.summary:
