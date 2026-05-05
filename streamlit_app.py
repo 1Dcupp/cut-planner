@@ -8,7 +8,7 @@ import itertools
 st.set_page_config(layout="wide")
 
 MAT_WIDTH = 134
-OVER_LIMIT = 6
+YIELD = 1  # keep production clean per run
 
 # -----------------------------
 # STATE
@@ -19,20 +19,17 @@ if "cuts" not in st.session_state:
 if "layouts" not in st.session_state:
     st.session_state.layouts = []
 
-if "summary" not in st.session_state:
-    st.session_state.summary = []
-
 # -----------------------------
-# BUILD DEMAND (ACTIVE REMAINING SYSTEM)
+# BUILD DEMAND
 # -----------------------------
-def build_remaining(cuts, yield_mult):
-    remaining = Counter()
+def build_demand(cuts):
+    demand = Counter()
     for c in cuts:
-        remaining[float(c["Width"])] += int(c["Qty"]) * yield_mult
-    return remaining
+        demand[float(c["Width"])] += int(c["Qty"])
+    return demand
 
 # -----------------------------
-# GENERATE ALL LAYOUTS
+# GENERATE LAYOUTS
 # -----------------------------
 def generate_layouts(widths):
     layouts = set()
@@ -45,131 +42,58 @@ def generate_layouts(widths):
     return list(layouts)
 
 # -----------------------------
-# SCORE LAYOUT BASED ON CURRENT REMAINING DEMAND
+# SIMULATE HOW MANY RUNS EACH LAYOUT CONTRIBUTES
 # -----------------------------
-def score_layout(layout, remaining):
+def simulate_schedule(demand, layouts):
 
-    usefulness = 0
+    remaining = demand.copy()
+    schedule = Counter()
 
-    for w in layout:
-        if remaining[w] > 0:
-            usefulness += 1
+    def done():
+        return all(v <= 0 for v in remaining.values())
 
-    fill = sum(layout)
-    waste = MAT_WIDTH - fill
+    while not done():
 
-    return usefulness, fill, -waste
+        best_layout = None
+        best_score = -1
 
-# -----------------------------
-# PICK BEST LAYOUT (DYNAMIC)
-# -----------------------------
-def pick_best_layout(layouts, remaining):
+        # choose layout that hits most remaining demand
+        for layout in layouts:
+            score = 0
+            for w in layout:
+                if remaining[w] > 0:
+                    score += 1
 
-    best = None
-    best_score = (-1, -1, -999)
+            if score > best_score:
+                best_score = score
+                best_layout = layout
 
-    for l in layouts:
-        score = score_layout(l, remaining)
-
-        if score > best_score:
-            best_score = score
-            best = l
-
-    return best
-
-# -----------------------------
-# APPLY PRODUCTION → REDUCE DEMAND (KEY FIX)
-# -----------------------------
-def apply_layout(layout, remaining, yield_mult):
-
-    for w in layout:
-        if remaining[w] > 0:
-            remaining[w] -= yield_mult
-
-            if remaining[w] < 0:
-                remaining[w] = 0
-
-# -----------------------------
-# CHECK IF DONE
-# -----------------------------
-def is_done(remaining):
-    return all(v <= 0 for v in remaining.values())
-
-# -----------------------------
-# SOLVER
-# -----------------------------
-def solve(cuts, yield_mult):
-
-    remaining = build_remaining(cuts, yield_mult)
-
-    widths = list(remaining.keys())
-    all_layouts = generate_layouts(widths)
-
-    history = []
-
-    max_iters = 10000
-    i = 0
-
-    while i < max_iters:
-
-        if is_done(remaining):
+        if not best_layout:
             break
 
-        best = pick_best_layout(all_layouts, remaining)
+        # APPLY ONCE (THIS IS KEY)
+        for w in best_layout:
+            if remaining[w] > 0:
+                remaining[w] -= YIELD
+                if remaining[w] < 0:
+                    remaining[w] = 0
 
-        if not best:
-            break
+        schedule[best_layout] += 1
 
-        apply_layout(best, remaining, yield_mult)
-
-        history.append(best)
-
-        i += 1
-
-    # -----------------------------
-    # GROUP RESULTS
-    # -----------------------------
-    grouped = Counter(history)
-
-    layouts = []
-
-    for layout, runs in grouped.items():
-        layouts.append({
-            "Blade Layout": " + ".join([f'{w}"' for w in layout]),
-            "Pieces per Mat": len(layout),
-            "Runs (Mats)": runs,
-            "Mat Fill": sum(layout),
-            "Waste": round(MAT_WIDTH - sum(layout), 2),
-            "Total Output per Run": Counter(layout)
-        })
-
-    summary = []
-
-    for w, val in remaining.items():
-        summary.append({
-            "Width": w,
-            "Remaining (Final)": val
-        })
-
-    return layouts, summary
+    return schedule, remaining
 
 # -----------------------------
 # UI
 # -----------------------------
-st.title("CUT PLANNER v7 – DEMAND DRIVEN ENGINE (134\")")
+st.title("CUT PLANNER v8 – SHOP FLOOR MODE (FINAL)")
 
-st.caption("System now removes completed demand and re-optimizes automatically")
-
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
 with col1:
     width = st.number_input("Cut Width", step=0.5)
 
 with col2:
     qty = st.number_input("Qty Needed", step=1)
-
-with col3:
-    yield_mult = st.selectbox("Yield Mode (X1 / X2 / X3)", [1, 2, 3])
 
 if st.button("Add Cut"):
     if width > 0 and qty > 0:
@@ -179,33 +103,40 @@ if st.button("Add Cut"):
 st.subheader("Cuts")
 st.dataframe(st.session_state.cuts, use_container_width=True)
 
-colA, colB = st.columns(2)
-
-with colA:
-    run = st.button("Generate Layouts")
-
-with colB:
-    clear = st.button("Clear All")
+run = st.button("Generate Production Schedule")
+clear = st.button("Clear All")
 
 if clear:
     st.session_state.cuts = []
-    st.session_state.layouts = []
-    st.session_state.summary = []
     st.rerun()
 
+# -----------------------------
+# EXECUTION
+# -----------------------------
 if run:
-    st.session_state.layouts, st.session_state.summary = solve(
-        st.session_state.cuts,
-        yield_mult
-    )
 
-# -----------------------------
-# OUTPUT
-# -----------------------------
-if st.session_state.layouts:
-    st.subheader("PRODUCTION LAYOUTS (v7)")
-    st.dataframe(st.session_state.layouts, use_container_width=True)
+    demand = build_demand(st.session_state.cuts)
+    widths = list(demand.keys())
+    layouts = generate_layouts(widths)
 
-if st.session_state.summary:
-    st.subheader("REMAINING DEMAND (FINAL STATE)")
-    st.dataframe(st.session_state.summary, use_container_width=True)
+    schedule, remaining = simulate_schedule(demand, layouts)
+
+    # -----------------------------
+    # FORMAT OUTPUT (IMPORTANT FIX)
+    # -----------------------------
+    output = []
+
+    for layout, runs in schedule.items():
+        output.append({
+            "Blade Layout": " + ".join([f'{w}"' for w in layout]),
+            "Run Count (Mats)": runs,
+            "Pieces per Run": len(layout),
+            "Mat Fill": sum(layout),
+            "Waste": round(MAT_WIDTH - sum(layout), 2)
+        })
+
+    st.subheader("SHOP FLOOR SCHEDULE (WHAT YOU ACTUALLY RUN)")
+    st.dataframe(output, use_container_width=True)
+
+    st.subheader("REMAINING (SHOULD BE ZERO OR OVERLIMIT)")
+    st.dataframe(dict(remaining), use_container_width=True)
