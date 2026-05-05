@@ -32,57 +32,64 @@ def build_needed(cuts, yield_mult):
     return needed
 
 # -----------------------------
-# GENERATE POSSIBLE COMBOS (KEY FIX)
+# GENERATE ALL COMBINATIONS (REAL KEY FIX)
 # -----------------------------
-def generate_combos(widths, max_width):
-    combos = []
+def generate_layouts(widths):
+    layouts = set()
 
-    # allow repeated use, small controlled depth
-    for r in range(1, 6):
+    # controlled depth search (fast but powerful)
+    for r in range(1, 7):
         for combo in itertools.combinations_with_replacement(widths, r):
-            if sum(combo) <= max_width:
-                combos.append(tuple(sorted(combo, reverse=True)))
+            total = sum(combo)
+            if total <= MAT_WIDTH:
+                layouts.add(tuple(sorted(combo, reverse=True)))
 
-    # remove duplicates
-    return list(set(combos))
+    return list(layouts)
 
 # -----------------------------
-# PICK BEST FIT COMBO
+# SCORE LAYOUTS
 # -----------------------------
-def best_fit_combo(widths, remaining):
+def score_layout(layout):
+    fill = sum(layout)
+    waste = MAT_WIDTH - fill
+    efficiency = fill / MAT_WIDTH
+    return efficiency, -waste  # higher is better
+
+# -----------------------------
+# PICK BEST LAYOUT
+# -----------------------------
+def pick_best_layout(widths):
+    candidates = generate_layouts(widths)
+
     best = None
-    best_fill = 0
+    best_score = (-1, -999)
 
-    combos = generate_combos(widths, MAT_WIDTH)
+    for layout in candidates:
+        eff, waste_score = score_layout(layout)
+        score = (eff, waste_score)
 
-    for c in combos:
-        total = sum(c)
-        if total <= remaining and total > best_fill:
-            best = c
-            best_fill = total
+        if score > best_score:
+            best_score = score
+            best = layout
 
     return best
 
 # -----------------------------
-# BUILD ONE MAT (REAL OPTIMIZER)
+# BUILD MAT
 # -----------------------------
 def build_mat(needed, produced):
 
-    widths = list(needed.keys())
-    mat = []
-    remaining = MAT_WIDTH
+    usable = [
+        w for w in needed
+        if produced[w] < needed[w] + OVER_LIMIT
+    ]
 
-    while True:
+    if not usable:
+        return []
 
-        combo = best_fit_combo(widths, remaining)
+    layout = pick_best_layout(usable)
 
-        if not combo:
-            break
-
-        mat.extend(combo)
-        remaining -= sum(combo)
-
-    return mat
+    return list(layout) if layout else []
 
 # -----------------------------
 # SOLVER
@@ -93,9 +100,11 @@ def solve(cuts, yield_mult):
     produced = Counter()
 
     layout_groups = defaultdict(int)
-    layouts = []
 
-    while True:
+    max_iters = 10000
+    i = 0
+
+    while i < max_iters:
 
         done = True
         for w in needed:
@@ -111,7 +120,7 @@ def solve(cuts, yield_mult):
         if not mat:
             break
 
-        # production tracking
+        # APPLY PRODUCTION AFTER LAYOUT IS BUILT (CORRECT)
         for w in mat:
             if produced[w] < needed[w] + OVER_LIMIT:
                 produced[w] += 1
@@ -119,7 +128,11 @@ def solve(cuts, yield_mult):
         key = tuple(sorted(mat))
         layout_groups[key] += 1
 
-    # build output table
+        i += 1
+
+    # build output
+    layouts = []
+
     for layout, runs in layout_groups.items():
         layouts.append({
             "Blade Layout": " + ".join([f'{w}"' for w in layout]),
@@ -127,7 +140,7 @@ def solve(cuts, yield_mult):
             "Runs (Mats)": runs,
             "Mat Fill": sum(layout),
             "Waste": round(MAT_WIDTH - sum(layout), 2),
-            "Total Pieces": sum(layout) * runs
+            "Total Pieces Produced": sum(layout) * runs
         })
 
     summary = []
@@ -146,9 +159,9 @@ def solve(cuts, yield_mult):
 # -----------------------------
 # UI
 # -----------------------------
-st.title("CUT PLANNER – FINAL MIXED LAYOUT ENGINE (134\")")
+st.title("CUT PLANNER – v3 FACTORY OPTIMIZER (134\")")
 
-st.caption("Now supports X1 / X2 / X3 + true mixed-size layouts")
+st.caption("True optimizer: generates + scores layouts before selecting best mix")
 
 col1, col2, col3 = st.columns(3)
 
@@ -159,14 +172,11 @@ with col2:
     qty = st.number_input("Qty Needed", step=1)
 
 with col3:
-    yield_mult = st.selectbox("Yield Mode", [1, 2, 3])
+    yield_mult = st.selectbox("Yield Mode (X1 / X2 / X3)", [1, 2, 3])
 
 if st.button("Add Cut"):
     if width > 0 and qty > 0:
-        st.session_state.cuts.append({
-            "Width": width,
-            "Qty": qty
-        })
+        st.session_state.cuts.append({"Width": width, "Qty": qty})
         st.rerun()
 
 st.subheader("Cuts")
@@ -187,10 +197,13 @@ if clear:
     st.rerun()
 
 if run:
-    st.session_state.layouts, st.session_state.summary = solve(st.session_state.cuts, yield_mult)
+    st.session_state.layouts, st.session_state.summary = solve(
+        st.session_state.cuts,
+        yield_mult
+    )
 
 if st.session_state.layouts:
-    st.subheader("OPTIMIZED MIXED LAYOUTS")
+    st.subheader("OPTIMIZED LAYOUTS (v3)")
     st.dataframe(st.session_state.layouts, use_container_width=True)
 
 if st.session_state.summary:
